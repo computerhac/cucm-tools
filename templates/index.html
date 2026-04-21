@@ -1,0 +1,1409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CUCM Tools</title>
+  <link rel="stylesheet" href="/static/style.css?v=4" />
+  <style>
+    /* Tab styles — inline to prevent caching issues */
+    .tab-container { margin-bottom: 20px; }
+
+    .tab-bar { display: flex; gap: 4px; padding: 0; }
+
+    .tab-btn {
+      padding: 10px 24px;
+      background: #e5e7eb;
+      border: 1px solid #9ca3af;
+      border-bottom: none;
+      border-radius: 6px 6px 0 0;
+      cursor: pointer;
+      font-size: 0.92rem;
+      font-weight: 500;
+      color: #6b7280;
+      position: relative;
+      top: 1px;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .tab-btn:hover:not(.active) {
+      background: #d1d5db;
+      color: #374151;
+    }
+
+    .tab-btn.active {
+      background: #ffffff !important;
+      color: #1d4ed8 !important;
+      font-weight: 700 !important;
+      border-color: #2563eb !important;
+      border-bottom: 2px solid #ffffff !important;
+      z-index: 2;
+    }
+
+    .tab-panel {
+      background: #ffffff;
+      border: 2px solid #2563eb;
+      border-radius: 0 8px 8px 8px;
+      padding: 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .tab-panel .card {
+      border: none !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      background: transparent !important;
+      padding: 20px 0 !important;
+      margin-bottom: 0 !important;
+      border-bottom: 1px solid #e5e7eb !important;
+    }
+
+    .tab-panel .card:last-child {
+      border-bottom: none !important;
+      padding-bottom: 0 !important;
+    }
+
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>CUCM Tools</h1>
+  <p class="subtitle">Cisco Unified Communications Manager toolbox.</p>
+
+  <!-- ================================================================
+       CLUSTER MANAGER
+  ================================================================ -->
+  <section class="card" id="cluster-section">
+    <div class="card-header">
+      <h2>Clusters</h2>
+      <button class="btn btn-small" onclick="openAddCluster()">+ Add Cluster</button>
+    </div>
+    <p class="hint">
+      Each cluster entry stores the CUCM publisher hostname/IP, AXL port (default 8443),
+      and credentials for an account with AXL API access. Passwords are encrypted on disk.
+    </p>
+    <table id="cluster-table">
+      <thead>
+        <tr><th>Name</th><th>Host</th><th>Port</th><th>Username</th><th>SSL Verify</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="cluster-tbody">
+        <tr><td colspan="6" class="loading">Loading clusters…</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Cluster add/edit form -->
+  <section class="card hidden" id="cluster-form-section">
+    <h2 id="cluster-form-title">Add Cluster</h2>
+    <form id="cluster-form" onsubmit="submitClusterForm(event)">
+      <input type="hidden" id="cluster-id" value="" />
+      <div class="form-row">
+        <label for="cluster-name">Display Name <span class="hint-inline">Friendly label for this cluster (e.g. "HQ CUCM")</span></label>
+        <input type="text" id="cluster-name" required placeholder="HQ CUCM" />
+      </div>
+      <div class="form-row">
+        <label for="cluster-host">Host / IP <span class="hint-inline">CUCM publisher hostname or IP address</span></label>
+        <input type="text" id="cluster-host" required placeholder="10.1.1.25" />
+      </div>
+      <div class="form-row">
+        <label for="cluster-port">AXL Port <span class="hint-inline">HTTPS port for the AXL API — almost always 8443</span></label>
+        <input type="number" id="cluster-port" value="8443" required />
+      </div>
+      <div class="form-row">
+        <label for="cluster-username">Username <span class="hint-inline">Application user or end user with AXL API access roles</span></label>
+        <input type="text" id="cluster-username" required placeholder="axl-readonly" />
+      </div>
+      <div class="form-row">
+        <label for="cluster-password">Password <span class="hint-inline">Stored encrypted — leave blank when editing to keep existing password</span></label>
+        <input type="password" id="cluster-password" placeholder="••••••••" />
+      </div>
+      <div class="form-row form-row-check">
+        <label for="cluster-verify-ssl">
+          <input type="checkbox" id="cluster-verify-ssl" />
+          Verify SSL Certificate
+          <span class="hint-inline">Uncheck for self-signed CUCM certificates (common in most deployments)</span>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn">Save Cluster</button>
+        <button type="button" class="btn btn-secondary" onclick="closeClusterForm()">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ================================================================
+       TABS
+  ================================================================ -->
+  <div class="tab-container">
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('route-plan', this)">Route Plan Search</button>
+    <button class="tab-btn" onclick="switchTab('subnet-search', this)">Subnet Search</button>
+    <button class="tab-btn" onclick="switchTab('device-switcher', this)">Phone Model Migration</button>
+    <button class="tab-btn" onclick="switchTab('route-plan-audit', this)">Route Plan Audit</button>
+    <button class="tab-btn" onclick="switchTab('sd-updater', this)">SD Updater</button>
+  </div>
+  <div class="tab-panel">
+
+  <!-- ================================================================
+       TAB: ROUTE PLAN SEARCH
+  ================================================================ -->
+  <div id="tab-route-plan" class="tab-content">
+    <section class="card">
+      <h2>Route Plan Search</h2>
+      <form id="search-form" onsubmit="runSearch(event)">
+        <div class="form-row">
+          <label for="search-clusters">
+            Clusters to Search
+            <span class="hint-inline">Hold Ctrl/Cmd to select multiple. Select none to search all clusters.</span>
+          </label>
+          <select id="search-clusters" multiple size="4"></select>
+        </div>
+        <div class="form-row">
+          <label>Search Mode <span class="hint-inline">Choose what field to match your query against</span></label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="mode" value="description" checked />
+              By Description
+              <span class="hint-inline">Matches the Description field on DNs, patterns, etc.</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="mode" value="number" />
+              By Number / Pattern
+              <span class="hint-inline">Matches the actual dial string (e.g. 1001, 9.@, +1XXXXXXXXXX)</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="search-query">
+            Search Query
+            <span class="hint-inline">Partial matches supported — wildcards (%) added automatically</span>
+          </label>
+          <input type="text" id="search-query" required placeholder="e.g. reception, lobby, 1001" />
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn" id="search-btn">Search</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card hidden" id="results-section">
+      <div class="card-header">
+        <h2>Results</h2>
+        <span id="results-summary" class="badge"></span>
+      </div>
+      <div id="results-container"></div>
+    </section>
+  </div>
+
+  <!-- ================================================================
+       TAB: SUBNET SEARCH
+  ================================================================ -->
+  <div id="tab-subnet-search" class="tab-content hidden">
+
+    <section class="card">
+      <h2>Subnet Search</h2>
+      <p class="hint">
+        Find all phones registered within a subnet. Enter a MAC address to look up
+        its IP automatically, or enter an IP address directly.
+      </p>
+      <form id="subnet-form" onsubmit="runSubnetSearch(event)">
+        <div class="form-row">
+          <label for="subnet-cluster">Cluster <span class="hint-inline">Cluster to search</span></label>
+          <select id="subnet-cluster"></select>
+        </div>
+        <div class="form-row">
+          <label for="subnet-query">MAC Address or IP Address
+            <span class="hint-inline">
+              Enter a MAC address (e.g. 1A2B3C4D5E6F) to resolve the phone's last known IP,
+              or enter an IP address directly (e.g. 10.1.2.3)
+            </span>
+          </label>
+          <input type="text" id="subnet-query" required placeholder="10.1.2.3 or 1A2B3C4D5E6F" />
+        </div>
+        <div class="form-row">
+          <label for="subnet-prefix">Subnet Size
+            <span class="hint-inline">The input IP (or resolved IP) is used to determine which subnet to search</span>
+          </label>
+          <select id="subnet-prefix">
+            <option value="22">/22 — 1,022 hosts</option>
+            <option value="23">/23 — 510 hosts</option>
+            <option value="24" selected>/24 — 254 hosts</option>
+            <option value="25">/25 — 126 hosts</option>
+            <option value="26">/26 — 62 hosts</option>
+            <option value="27">/27 — 30 hosts</option>
+            <option value="28">/28 — 14 hosts</option>
+            <option value="29">/29 — 6 hosts</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn" id="subnet-btn">Search</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card hidden" id="subnet-results-section">
+      <div class="card-header">
+        <h2>Phones in Subnet</h2>
+        <span id="subnet-results-summary" class="badge"></span>
+      </div>
+      <div id="subnet-results-container"></div>
+    </section>
+
+  </div><!-- /tab-subnet-search -->
+
+  <!-- ================================================================
+       TAB: PHONE MODEL MIGRATION
+  ================================================================ -->
+  <div id="tab-device-switcher" class="tab-content hidden">
+
+    <!-- Step 1: Lookup -->
+    <section class="card">
+      <h2>Step 1 — Look Up Existing Device</h2>
+      <form id="lookup-form" onsubmit="lookupDevice(event)">
+        <div class="form-row">
+          <label for="lookup-cluster">Cluster <span class="hint-inline">Cluster to search for the device</span></label>
+          <select id="lookup-cluster"></select>
+        </div>
+        <div class="form-row">
+          <label for="lookup-device">Device Name or MAC Address
+            <span class="hint-inline">
+              Enter a MAC address (e.g. 1A2B3C4D5E6F) and SEP will be added automatically,
+              or enter a full device name (e.g. SEPXXXX, CSFUSERNAME, BOTUSERNAME)
+            </span>
+          </label>
+          <input type="text" id="lookup-device" required placeholder="1A2B3C4D5E6F or CSFJSMITH" />
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn" id="lookup-btn">Look Up Device</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Step 2: Current device info (hidden until lookup succeeds) -->
+    <section class="card hidden" id="device-info-section">
+      <h2>Current Device</h2>
+      <div id="device-info-grid" class="info-grid"></div>
+      <h3 style="margin-top:16px">Line Associations</h3>
+      <div id="device-lines-container"></div>
+    </section>
+
+    <!-- Step 3: New device config (hidden until lookup succeeds) -->
+    <section class="card hidden" id="switch-form-section">
+      <h2>Step 2 — Configure New Device</h2>
+      <form id="switch-form" onsubmit="doSwitch(event)">
+
+        <div class="form-row">
+          <label>New Device Type
+            <span class="hint-inline">Select the type of device you are switching to</span>
+          </label>
+          <div class="radio-group" id="device-type-group">
+            <label class="radio-label"><input type="radio" name="new_type" value="SEP" onchange="onDeviceTypeChange()" checked /> Physical Phone (SEP)</label>
+            <label class="radio-label"><input type="radio" name="new_type" value="CSF" onchange="onDeviceTypeChange()" /> Jabber for Windows/Mac (CSF)</label>
+            <label class="radio-label"><input type="radio" name="new_type" value="TCT" onchange="onDeviceTypeChange()" /> Jabber for iPhone (TCT)</label>
+            <label class="radio-label"><input type="radio" name="new_type" value="BOT" onchange="onDeviceTypeChange()" /> Jabber for Android (BOT)</label>
+            <label class="radio-label"><input type="radio" name="new_type" value="TAB" onchange="onDeviceTypeChange()" /> Jabber for iPad (TAB)</label>
+          </div>
+        </div>
+
+        <!-- Physical phone: MAC input -->
+        <div class="form-row" id="row-new-mac">
+          <label for="new-mac">New MAC Address
+            <span class="hint-inline">12 hex characters — SEP prefix added automatically</span>
+          </label>
+          <input type="text" id="new-mac" placeholder="1A2B3C4D5E6F" maxlength="17" />
+        </div>
+
+        <!-- Jabber: username/device name input -->
+        <div class="form-row hidden" id="row-new-jabber">
+          <label for="new-jabber-id">Jabber Device Identifier
+            <span class="hint-inline">
+              Username or full device name. The prefix (CSF/TCT/BOT/TAB) will be added automatically
+              if you enter just a username (e.g. "jsmith" becomes "CSFJSMITH")
+            </span>
+          </label>
+          <input type="text" id="new-jabber-id" placeholder="jsmith" />
+        </div>
+
+        <div class="form-row">
+          <label for="new-model">Model
+            <span class="hint-inline">Phone or endpoint model for the new device</span>
+          </label>
+          <select id="new-model" onchange="loadButtonTemplates()" required>
+            <option value="">— select a cluster and device type first —</option>
+          </select>
+        </div>
+
+        <div class="form-row" id="row-button-template">
+          <label for="new-button-template">Phone Button Template
+            <span class="hint-inline">Must match the selected model — populated automatically after model selection</span>
+          </label>
+          <select id="new-button-template">
+            <option value="">— select a model first —</option>
+          </select>
+        </div>
+
+        <div class="form-row form-row-check">
+          <label for="remove-old">
+            <input type="checkbox" id="remove-old" />
+            Remove old device after switch
+            <span class="hint-inline">
+              Deletes the original device from CUCM once the new one is created successfully.
+              Leave unchecked to keep the old device for testing before removing it manually.
+            </span>
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-danger" id="switch-btn">Execute Switch</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Result -->
+    <section class="card hidden" id="switch-result-section">
+      <h2>Switch Result</h2>
+      <div id="switch-result-content"></div>
+    </section>
+
+  </div><!-- /tab-device-switcher -->
+
+  <!-- ================================================================
+       TAB: ROUTE PLAN AUDIT
+  ================================================================ -->
+  <div id="tab-route-plan-audit" class="tab-content hidden">
+
+    <section class="card">
+      <h2>Route Plan Audit</h2>
+      <p class="hint">
+        Upload a spreadsheet with DIDs in column A. Each number is checked against CUCM
+        and the results are returned sorted numerically, grouped into consecutive ranges,
+        with the type and description of each entry.
+      </p>
+      <form id="audit-form" onsubmit="runAudit(event)">
+        <div class="form-row">
+          <label for="audit-cluster">Cluster <span class="hint-inline">Cluster to audit against</span></label>
+          <select id="audit-cluster"></select>
+        </div>
+        <div class="form-row">
+          <label for="audit-file">DID Spreadsheet
+            <span class="hint-inline">Excel (.xlsx) or CSV with DIDs in column A</span>
+          </label>
+          <input type="file" id="audit-file" accept=".xlsx,.csv" required />
+        </div>
+        <div class="form-row form-row-check">
+          <label for="audit-skip-header">
+            <input type="checkbox" id="audit-skip-header" checked />
+            First row is a header
+            <span class="hint-inline">Skip the first row of the spreadsheet</span>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn" id="audit-btn">Run Audit</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card hidden" id="audit-results-section">
+      <h2>Audit Complete</h2>
+      <div id="audit-results-container"></div>
+    </section>
+
+  </div><!-- /tab-route-plan-audit -->
+
+  <!-- ================================================================
+       TAB: SD UPDATER
+  ================================================================ -->
+  <div id="tab-sd-updater" class="tab-content hidden">
+
+    <!-- Step 1: Enter MACs -->
+    <section class="card">
+      <h2>Step 1 — Enter Devices</h2>
+      <p class="hint">
+        Enter one MAC address per line. Speed dials and BLFs for each phone will be
+        fetched and displayed so you can confirm before updating.
+      </p>
+      <form id="sd-preview-form" onsubmit="sdFetchPreview(event)">
+        <div class="form-row">
+          <label for="sd-cluster">Cluster <span class="hint-inline">Cluster containing these devices</span></label>
+          <select id="sd-cluster"></select>
+        </div>
+        <div class="form-row">
+          <label for="sd-macs">MAC Addresses
+            <span class="hint-inline">One per line — colons, dashes, and dots are stripped automatically</span>
+          </label>
+          <textarea id="sd-macs" rows="6" required
+            placeholder="1A2B3C4D5E6F&#10;AA:BB:CC:DD:EE:FF&#10;AABBCCDDEEFF"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn" id="sd-preview-btn">Fetch Speed Dials &amp; BLFs</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Preview results — collapsed rows -->
+    <section class="card hidden" id="sd-preview-section">
+      <div class="card-header">
+        <h2>Current Configuration</h2>
+        <span id="sd-preview-summary" class="badge"></span>
+      </div>
+      <div style="margin-bottom:10px; display:flex; gap:8px;">
+        <button class="btn btn-small" onclick="sdExpandAll()">Expand All</button>
+        <button class="btn btn-small btn-secondary" onclick="sdCollapseAll()">Collapse All</button>
+      </div>
+      <div id="sd-preview-container"></div>
+    </section>
+
+    <!-- Step 2: Update -->
+    <section class="card hidden" id="sd-update-section">
+      <h2>Step 2 — Update</h2>
+      <p class="hint">Select the type of button to update, then enter the new values. All devices in the list will be updated.</p>
+      <form id="sd-update-form" onsubmit="sdUpdate(event)">
+
+        <div class="form-row">
+          <label>Button Type</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="sd-type" value="sd" checked onchange="sdToggleType()" />
+              Speed Dial
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="sd-type" value="blf" onchange="sdToggleType()" />
+              BLF Speed Dial
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>Action</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="sd-action" value="update" checked onchange="sdToggleAction()" />
+              Update
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="sd-action" value="remove" onchange="sdToggleAction()" />
+              Remove
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>Target By</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="sd-mode" value="by-position" checked onchange="sdToggleMode()" />
+              Position
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="sd-mode" value="by-number" onchange="sdToggleMode()" />
+              Number — find and replace
+            </label>
+          </div>
+        </div>
+
+        <!-- Speed dial fields -->
+        <div id="sd-sd-fields">
+          <div id="sd-pos-field" class="form-row">
+            <label for="sd-index">Position <span class="hint-inline">Button position number</span></label>
+            <input type="number" id="sd-index" min="1" max="99" value="1" style="width:100px;" />
+          </div>
+          <div id="sd-source-field" class="form-row hidden">
+            <label for="sd-source">Source Number <span class="hint-inline">Current number to find — updates whichever position it's on</span></label>
+            <input type="text" id="sd-source" placeholder="1234" />
+          </div>
+          <div id="sd-sd-update-fields">
+            <div class="form-row">
+              <label for="sd-dirn">Number <span class="hint-inline">The dial string (e.g. 91234567890)</span></label>
+              <input type="text" id="sd-dirn" placeholder="91234567890" />
+            </div>
+            <div class="form-row">
+              <label for="sd-label">Label <span class="hint-inline">Text shown on the phone display</span></label>
+              <input type="text" id="sd-label" placeholder="Support Line" />
+            </div>
+          </div>
+        </div>
+
+        <!-- BLF fields -->
+        <div id="sd-blf-fields" class="hidden">
+          <div id="blf-pos-field" class="form-row">
+            <label for="blf-index">Position <span class="hint-inline">Button position number</span></label>
+            <input type="number" id="blf-index" min="1" max="99" value="1" style="width:100px;" />
+          </div>
+          <div id="blf-source-field" class="form-row hidden">
+            <label for="blf-source">Source Number <span class="hint-inline">Current number to find — matches Destination or DN</span></label>
+            <input type="text" id="blf-source" placeholder="+10001112222" />
+          </div>
+          <div id="sd-blf-update-fields">
+            <div class="form-row">
+              <label for="blf-dest">Destination / Number
+                <span class="hint-inline">The dial string — click Find DN to link a monitored Directory Number instead</span>
+              </label>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <input type="text" id="blf-dest" placeholder="91234567890" style="flex:1;" oninput="sdClearDirn()" />
+                <button type="button" class="btn btn-small" onclick="sdFindDN()">Find DN</button>
+              </div>
+            </div>
+            <div class="form-row hidden" id="blf-partition-row">
+              <label for="blf-partition-select">Directory Number Partition
+                <span class="hint-inline">Select a partition to write as a monitored BLF DN, or leave blank for destination-only</span>
+              </label>
+              <select id="blf-partition-select" onchange="sdSelectPartition()"></select>
+            </div>
+            <div id="blf-dn-indicator" style="margin:0 0 12px 0; display:none;">
+              <span id="blf-dn-badge"></span>
+            </div>
+            <div class="form-row">
+              <label for="blf-label">Label <span class="hint-inline">Text shown on the phone display</span></label>
+              <input type="text" id="blf-label" placeholder="John Smith" />
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn" id="sd-update-btn">Update All Devices</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Update results -->
+    <section class="card hidden" id="sd-results-section">
+      <div class="card-header">
+        <h2>Update Results</h2>
+        <span id="sd-results-summary" class="badge"></span>
+      </div>
+      <div id="sd-results-container"></div>
+    </section>
+
+  </div><!-- /tab-sd-updater -->
+  </div><!-- /tab-panel -->
+  </div><!-- /tab-container -->
+
+</div><!-- /container -->
+
+<script>
+// ============================================================
+// State
+// ============================================================
+let currentClusters = [];
+let currentDevice = null;
+let currentClusterId = null;
+
+// ============================================================
+// Tab switching
+// ============================================================
+function switchTab(tabId, btn) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.add('hidden'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + tabId).classList.remove('hidden');
+  btn.classList.add('active');
+}
+
+// ============================================================
+// Cluster management
+// ============================================================
+async function loadClusters() {
+  const resp = await fetch('/api/clusters');
+  currentClusters = await resp.json();
+  renderClusterTable(currentClusters);
+  renderClusterSelects(currentClusters);
+}
+
+function renderClusterTable(clusters) {
+  const tbody = document.getElementById('cluster-tbody');
+  if (!clusters.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="loading">No clusters configured yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = clusters.map(c => `
+    <tr>
+      <td>${esc(c.name)}</td><td>${esc(c.host)}</td><td>${c.port}</td>
+      <td>${esc(c.username)}</td><td>${c.verify_ssl ? 'Yes' : 'No'}</td>
+      <td class="actions">
+        <button class="btn btn-small" onclick="testCluster(${c.id},'${esc(c.name)}')">Test</button>
+        <button class="btn btn-small" onclick="openEditCluster(${c.id})">Edit</button>
+        <button class="btn btn-small btn-danger" onclick="deleteCluster(${c.id},'${esc(c.name)}')">Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+function renderClusterSelects(clusters) {
+  const opts = clusters.map(c => `<option value="${c.id}">${esc(c.name)} — ${esc(c.host)}</option>`).join('');
+  document.getElementById('search-clusters').innerHTML = opts;
+  document.getElementById('lookup-cluster').innerHTML = opts;
+  document.getElementById('subnet-cluster').innerHTML = opts;
+  document.getElementById('audit-cluster').innerHTML = opts;
+  document.getElementById('sd-cluster').innerHTML = opts;
+}
+
+function openAddCluster() {
+  document.getElementById('cluster-form-title').textContent = 'Add Cluster';
+  document.getElementById('cluster-id').value = '';
+  document.getElementById('cluster-form').reset();
+  document.getElementById('cluster-port').value = '8443';
+  document.getElementById('cluster-form-section').classList.remove('hidden');
+  document.getElementById('cluster-form-section').scrollIntoView({behavior:'smooth'});
+}
+
+async function openEditCluster(id) {
+  const c = currentClusters.find(x => x.id === id);
+  if (!c) return;
+  document.getElementById('cluster-form-title').textContent = 'Edit Cluster';
+  document.getElementById('cluster-id').value = c.id;
+  document.getElementById('cluster-name').value = c.name;
+  document.getElementById('cluster-host').value = c.host;
+  document.getElementById('cluster-port').value = c.port;
+  document.getElementById('cluster-username').value = c.username;
+  document.getElementById('cluster-password').value = '';
+  document.getElementById('cluster-verify-ssl').checked = c.verify_ssl;
+  document.getElementById('cluster-form-section').classList.remove('hidden');
+  document.getElementById('cluster-form-section').scrollIntoView({behavior:'smooth'});
+}
+
+function closeClusterForm() {
+  document.getElementById('cluster-form-section').classList.add('hidden');
+}
+
+async function submitClusterForm(e) {
+  e.preventDefault();
+  const id = document.getElementById('cluster-id').value;
+  const payload = {
+    name:       document.getElementById('cluster-name').value.trim(),
+    host:       document.getElementById('cluster-host').value.trim(),
+    port:       parseInt(document.getElementById('cluster-port').value),
+    username:   document.getElementById('cluster-username').value.trim(),
+    password:   document.getElementById('cluster-password').value,
+    verify_ssl: document.getElementById('cluster-verify-ssl').checked,
+  };
+  let resp;
+  if (id) {
+    const update = {...payload};
+    if (!update.password) delete update.password;
+    resp = await fetch(`/api/clusters/${id}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(update)});
+  } else {
+    if (!payload.password) { alert('Password is required when adding a cluster.'); return; }
+    resp = await fetch('/api/clusters', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  }
+  if (!resp.ok) { const err = await resp.json(); alert('Error: ' + (err.detail || 'Unknown error')); return; }
+  closeClusterForm();
+  loadClusters();
+}
+
+async function deleteCluster(id, name) {
+  if (!confirm(`Delete cluster "${name}"? This cannot be undone.`)) return;
+  await fetch(`/api/clusters/${id}`, {method:'DELETE'});
+  loadClusters();
+}
+
+async function testCluster(id, name) {
+  const btn = event.target;
+  btn.textContent = 'Testing…'; btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/clusters/${id}/test`, {method:'POST'});
+    const data = await resp.json();
+    alert(`${name}: ${data.status}`);
+  } finally { btn.textContent = 'Test'; btn.disabled = false; }
+}
+
+// ============================================================
+// Route Plan Search
+// ============================================================
+async function runSearch(e) {
+  e.preventDefault();
+  const btn = document.getElementById('search-btn');
+  btn.textContent = 'Searching…'; btn.disabled = true;
+  const clusterIds = [...document.getElementById('search-clusters').selectedOptions].map(o => parseInt(o.value));
+  const mode  = document.querySelector('input[name="mode"]:checked').value;
+  const query = document.getElementById('search-query').value.trim();
+  try {
+    const resp = await fetch('/api/route-plan/search', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cluster_ids: clusterIds, mode, query}),
+    });
+    if (!resp.ok) { const err = await resp.json(); alert('Error: ' + (err.detail || 'Unknown')); return; }
+    renderSearchResults((await resp.json()).results, query);
+  } finally { btn.textContent = 'Search'; btn.disabled = false; }
+}
+
+function renderSearchResults(clusterResults, query) {
+  const section = document.getElementById('results-section');
+  const container = document.getElementById('results-container');
+  const summary = document.getElementById('results-summary');
+  section.classList.remove('hidden');
+  const total = clusterResults.reduce((s, c) => s + c.results.length, 0);
+  summary.textContent = `${total} result${total !== 1 ? 's' : ''}`;
+  if (total === 0 && clusterResults.every(c => !c.error)) {
+    container.innerHTML = `<p class="no-results">No matches found for <strong>${esc(query)}</strong>.</p>`;
+    section.scrollIntoView({behavior:'smooth'}); return;
+  }
+  container.innerHTML = clusterResults.map(c => {
+    if (c.error) return `<div class="cluster-block error"><h3>${esc(c.cluster)}</h3><p class="error-msg">Error: ${esc(c.error)}</p></div>`;
+    if (!c.results.length) return `<div class="cluster-block"><h3>${esc(c.cluster)}</h3><p class="no-results">No results.</p></div>`;
+    return `<div class="cluster-block">
+      <h3>${esc(c.cluster)} <span class="badge">${c.results.length}</span></h3>
+      <table><thead><tr><th>Pattern</th><th>Type</th><th>Partition</th><th>Description</th></tr></thead>
+      <tbody>${c.results.map(r => `
+        <tr>
+          <td class="mono">${esc(r.pattern)}</td>
+          <td><span class="type-badge">${esc(r.type)}</span></td>
+          <td>${esc(r.partition)}</td>
+          <td>${esc(r.description)}</td>
+        </tr>`).join('')}
+      </tbody></table></div>`;
+  }).join('');
+  section.scrollIntoView({behavior:'smooth'});
+}
+
+// ============================================================
+// Device Switcher
+// ============================================================
+async function lookupDevice(e) {
+  e.preventDefault();
+  const btn = document.getElementById('lookup-btn');
+  btn.textContent = 'Looking up…'; btn.disabled = true;
+
+  currentClusterId = parseInt(document.getElementById('lookup-cluster').value);
+  const rawName = document.getElementById('lookup-device').value.trim();
+
+  try {
+    const resp = await fetch(`/api/device/lookup?cluster_id=${currentClusterId}&device_name=${encodeURIComponent(rawName)}`);
+    if (!resp.ok) {
+      const err = await resp.json();
+      alert('Error: ' + (err.detail || 'Unknown error'));
+      return;
+    }
+    const data = await resp.json();
+    currentDevice = data.device;
+    renderDeviceInfo(data.device, data.lines);
+    await loadModels();
+    document.getElementById('device-info-section').classList.remove('hidden');
+    document.getElementById('switch-form-section').classList.remove('hidden');
+    document.getElementById('switch-result-section').classList.add('hidden');
+    document.getElementById('device-info-section').scrollIntoView({behavior:'smooth'});
+  } finally { btn.textContent = 'Look Up Device'; btn.disabled = false; }
+}
+
+function renderDeviceInfo(device, lines) {
+  const grid = document.getElementById('device-info-grid');
+  const fields = [
+    ['Device Name',         device.name],
+    ['Device Type',         device.device_type],
+    ['Model',               device.model],
+    ['Protocol',            device.protocol],
+    ['Description',         device.description],
+    ['Device Pool',         device.devicepool],
+    ['CSS',                 device.css],
+    ['Softkey Template',    device.softkeytemplate],
+    ['Button Template',     device.phonetemplate],
+    ['Location',            device.location],
+    ['Owner User ID',       device.owneruserid],
+    ['Web Access',          device.webAccessEnabled],
+    ['Allow CTI Control',   device.allowCtiControlFlag],
+    ['Allow Hoteling',      device.allowHotelingFlag],
+    ['Trace Enabled',       device.traceFlag],
+    ['Privacy',             device.privacyInfoStatus],
+    ['Single Button Barge', device.singleButtonBarge],
+    ['Join Across Lines',   device.joinAcrossLines],
+    ['Built-in Bridge',     device.builtInBridgeStatus],
+  ].filter(([, v]) => v != null && v !== '');
+  grid.innerHTML = fields.map(([label, val]) =>
+    `<div class="info-row"><span class="info-label">${label}</span><span class="info-value">${esc(val || '—')}</span></div>`
+  ).join('');
+
+  const linesEl = document.getElementById('device-lines-container');
+  if (!lines.length) {
+    linesEl.innerHTML = '<p class="no-results">No lines associated.</p>';
+    return;
+  }
+  linesEl.innerHTML = `<table>
+    <thead><tr><th>Index</th><th>Pattern</th><th>Partition</th><th>Label</th><th>Display</th><th>External Mask</th></tr></thead>
+    <tbody>${lines.map(l => `
+      <tr>
+        <td>${esc(l.line_index)}</td>
+        <td class="mono">${esc(l.pattern)}</td>
+        <td>${esc(l.partition || '—')}</td>
+        <td>${esc(l.label || '—')}</td>
+        <td>${esc(l.display || '—')}</td>
+        <td class="mono">${esc(l.e164mask || '—')}</td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function loadModels() {
+  const selectedType = document.querySelector('input[name="new_type"]:checked').value;
+  const resp = await fetch(`/api/device/models?cluster_id=${currentClusterId}`);
+  if (!resp.ok) return;
+  const data = await resp.json();
+
+  // Split into physical phones vs Jabber based on model name
+  const jabberKeywords = ['jabber', 'client services framework', 'mobile communicator'];
+  const isJabber = name => jabberKeywords.some(k => name.toLowerCase().includes(k));
+  const filtered = selectedType === 'SEP'
+    ? data.models.filter(m => !isJabber(m.name))
+    : data.models.filter(m => isJabber(m.name));
+
+  const sel = document.getElementById('new-model');
+  sel.innerHTML = '<option value="">— select a model —</option>' +
+    filtered.map(m => `<option value="${esc(m.name)}">${esc(m.name)}</option>`).join('');
+
+  // Reset button template
+  document.getElementById('new-button-template').innerHTML = '<option value="">— select a model first —</option>';
+}
+
+async function loadButtonTemplates() {
+  const model = document.getElementById('new-model').value;
+  const sel = document.getElementById('new-button-template');
+  if (!model) { sel.innerHTML = '<option value="">— select a model first —</option>'; return; }
+
+  sel.innerHTML = '<option value="">Loading…</option>';
+  const resp = await fetch(`/api/device/button-templates?cluster_id=${currentClusterId}&model_name=${encodeURIComponent(model)}`);
+  if (!resp.ok) { sel.innerHTML = '<option value="">Failed to load</option>'; return; }
+  const data = await resp.json();
+  sel.innerHTML = data.templates.length
+    ? data.templates.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')
+    : '<option value="">No templates found for this model</option>';
+}
+
+function onDeviceTypeChange() {
+  const type = document.querySelector('input[name="new_type"]:checked').value;
+  const isPhysical = type === 'SEP';
+  document.getElementById('row-new-mac').classList.toggle('hidden', !isPhysical);
+  document.getElementById('row-new-jabber').classList.toggle('hidden', isPhysical);
+  document.getElementById('row-button-template').classList.toggle('hidden', !isPhysical);
+  if (currentClusterId) loadModels();
+}
+
+async function doSwitch(e) {
+  e.preventDefault();
+  const type = document.querySelector('input[name="new_type"]:checked').value;
+  const isPhysical = type === 'SEP';
+
+  let newDeviceName;
+  if (isPhysical) {
+    const mac = document.getElementById('new-mac').value.trim().toUpperCase()
+                  .replace(/[:\-\.]/g, '');
+    if (mac.length !== 12) { alert('MAC address must be 12 hex characters.'); return; }
+    newDeviceName = 'SEP' + mac;
+  } else {
+    const jabberInput = document.getElementById('new-jabber-id').value.trim().toUpperCase();
+    const knownPrefixes = ['CSF','TCT','BOT','TAB'];
+    newDeviceName = knownPrefixes.some(p => jabberInput.startsWith(p))
+      ? jabberInput
+      : type + jabberInput;
+  }
+
+  const model = document.getElementById('new-model').value;
+  if (!model) { alert('Please select a model.'); return; }
+
+  const buttonTemplate = isPhysical ? document.getElementById('new-button-template').value : '';
+  const removeOld = document.getElementById('remove-old').checked;
+
+  if (!confirm(`Switch device:\n\nOld: ${currentDevice.name}\nNew: ${newDeviceName}\nModel: ${model}${removeOld ? '\n\nThe old device WILL be deleted.' : '\n\nThe old device will be kept.'}\n\nProceed?`)) return;
+
+  const btn = document.getElementById('switch-btn');
+  btn.textContent = 'Switching…'; btn.disabled = true;
+
+  try {
+    const resp = await fetch('/api/device/switch', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        cluster_id:     currentClusterId,
+        old_device_name: currentDevice.name,
+        new_device_name: newDeviceName,
+        new_model:       model,
+        button_template: buttonTemplate || null,
+        remove_old:      removeOld,
+      }),
+    });
+    const data = await resp.json();
+    const section = document.getElementById('switch-result-section');
+    const content = document.getElementById('switch-result-content');
+    section.classList.remove('hidden');
+    if (!resp.ok) {
+      content.innerHTML = `<p class="error-msg">Error: ${esc(data.detail || JSON.stringify(data))}</p>`;
+    } else if (data.status === 'partial') {
+      content.innerHTML = `<p class="warn-msg">${esc(data.message)}</p>` + renderFieldSummary(data);
+    } else {
+      content.innerHTML = `
+        <p class="success-msg">Switch completed successfully.</p>
+        <div class="info-grid">
+          <div class="info-row"><span class="info-label">New Device</span><span class="info-value mono">${esc(data.new_device)}</span></div>
+          <div class="info-row"><span class="info-label">Old Device</span><span class="info-value mono">${esc(data.old_device)}</span></div>
+          <div class="info-row"><span class="info-label">Old Device Removed</span><span class="info-value">${data.removed_old ? 'Yes' : 'No'}</span></div>
+        </div>` + renderFieldSummary(data);
+    }
+    section.scrollIntoView({behavior:'smooth'});
+  } finally { btn.textContent = 'Execute Switch'; btn.disabled = false; }
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+const SETTING_LABELS = {
+  devicePoolName:                   'Device Pool',
+  callingSearchSpaceName:           'Calling Search Space',
+  softkeyTemplateName:              'Softkey Template',
+  phoneTemplateName:                'Button Template',
+  locationName:                     'Location',
+  ownerUserName:                    'Owner User ID',
+  commonPhoneConfigName:            'Common Phone Config',
+  networkLocale:                    'Network Locale',
+  userLocale:                       'User Locale',
+  mediaResourceListName:            'Media Resource Group List',
+  automatedAlternateRoutingCssName: 'AAR Calling Search Space',
+  aarNeighborhoodName:              'AAR Group',
+  webAccessEnabled:                 'Web Access',
+  traceFlag:                        'Trace Enabled',
+  allowHotelingFlag:                 'Allow Hoteling',
+  privacyInfoStatus:                'Privacy',
+  singleButtonBarge:                'Single Button Barge',
+  joinAcrossLines:                  'Join Across Lines',
+  builtInBridgeStatus:              'Built-in Bridge',
+  allowCtiControlFlag:              'Allow CTI Control',
+  retryVideoCallAsAudio:            'Retry Video Call as Audio',
+  requireDtmfReception:             'Require DTMF Reception',
+  rfc2543Hold:                      'RFC 2543 Hold',
+  packetCaptureMode:                'Packet Capture Mode',
+  phoneSecurityProfileName:         'Security Profile',
+  vendorConfig:                     'Device-Specific Settings (PC Port, Enhanced Line Mode, etc.)',
+};
+
+// For unknown tags not in SETTING_LABELS, convert camelCase to words
+function camelToWords(s) {
+  return s.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim();
+}
+
+function renderFieldSummary(data) {
+  const transferred = data.transferred || [];
+  const skipped = data.skipped || [];
+  if (!transferred.length && !skipped.length) return '';
+  const label = tag => SETTING_LABELS[tag] || camelToWords(tag);
+  let html = '<div style="margin-top:16px">';
+  if (transferred.length) {
+    html += `<p style="margin:0 0 6px;font-weight:600;color:#166534">Transferred settings (${transferred.length}):</p>`;
+    html += '<ul style="margin:0 0 12px;padding-left:20px;color:#166534;font-size:0.88rem">';
+    html += transferred.map(t => `<li>${esc(label(t))}</li>`).join('');
+    html += '</ul>';
+  }
+  if (skipped.length) {
+    html += `<p style="margin:0 0 6px;font-weight:600;color:#92400e">Not supported on this model (${skipped.length}):</p>`;
+    html += '<ul style="margin:0;padding-left:20px;color:#92400e;font-size:0.88rem">';
+    html += skipped.map(t => `<li>${esc(label(t))}</li>`).join('');
+    html += '</ul>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function esc(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ============================================================
+// Subnet Search
+// ============================================================
+async function runSubnetSearch(e) {
+  e.preventDefault();
+  const btn = document.getElementById('subnet-btn');
+  btn.textContent = 'Searching…'; btn.disabled = true;
+  const clusterId = document.getElementById('subnet-cluster').value;
+  const query     = document.getElementById('subnet-query').value.trim();
+  const prefix    = document.getElementById('subnet-prefix').value;
+  try {
+    const resp = await fetch(
+      `/api/subnet/search?cluster_id=${clusterId}&query=${encodeURIComponent(query)}&prefix=${prefix}`
+    );
+    if (!resp.ok) {
+      const err = await resp.json();
+      alert('Error: ' + (err.detail || 'Unknown error'));
+      return;
+    }
+    renderSubnetResults(await resp.json());
+  } finally { btn.textContent = 'Search'; btn.disabled = false; }
+}
+
+function formatLastSeen(ts) {
+  if (!ts) return '—';
+  const n = parseInt(ts, 10);
+  if (!isNaN(n) && n > 1000000000) return new Date(n * 1000).toLocaleString();
+  return String(ts);
+}
+
+function renderSubnetResults(data) {
+  const section   = document.getElementById('subnet-results-section');
+  const container = document.getElementById('subnet-results-container');
+  const summary   = document.getElementById('subnet-results-summary');
+
+  section.classList.remove('hidden');
+  summary.textContent = `${data.count} phone${data.count !== 1 ? 's' : ''}`;
+
+  let header = `<p class="hint">Network: <strong>${esc(data.network)}</strong>`;
+  if (data.source_device) {
+    header += ` &nbsp;·&nbsp; Resolved from: <strong class="mono">${esc(data.source_device)}</strong> (${esc(data.seed_ip)})`;
+  }
+  header += '</p>';
+
+  if (!data.phones.length) {
+    container.innerHTML = header + '<p class="no-results">No registered phones found in this subnet.</p>';
+    section.scrollIntoView({behavior:'smooth'});
+    return;
+  }
+
+  container.innerHTML = header + `
+    <table>
+      <thead>
+        <tr><th>Device Name</th><th>Description</th><th>IP Address</th><th>Last Seen</th><th>Last UCM</th></tr>
+      </thead>
+      <tbody>
+        ${data.phones.map(p => `
+          <tr>
+            <td class="mono">${esc(p.device_name)}</td>
+            <td>${esc(p.description || '—')}</td>
+            <td class="mono">${esc(p.ip_address)}</td>
+            <td>${esc(formatLastSeen(p.last_seen))}</td>
+            <td>${esc(p.last_ucm || '—')}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+  section.scrollIntoView({behavior:'smooth'});
+}
+
+// ============================================================
+// Route Plan Audit
+// ============================================================
+async function runAudit(e) {
+  e.preventDefault();
+  const btn = document.getElementById('audit-btn');
+  btn.textContent = 'Running…'; btn.disabled = true;
+  document.getElementById('audit-results-section').classList.add('hidden');
+
+  const form = new FormData();
+  form.append('cluster_id', document.getElementById('audit-cluster').value);
+  form.append('skip_header', document.getElementById('audit-skip-header').checked);
+  form.append('file', document.getElementById('audit-file').files[0]);
+
+  try {
+    const resp = await fetch('/api/route-plan-audit/process', { method: 'POST', body: form });
+    if (!resp.ok) {
+      const err = await resp.json();
+      alert('Error: ' + (err.detail || 'Unknown error'));
+      return;
+    }
+
+    // Trigger file download
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = 'route_plan_audit.xlsx';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+
+    // Show summary from response headers
+    const total    = resp.headers.get('X-Audit-Total')     || '?';
+    const found    = resp.headers.get('X-Audit-Found')     || '?';
+    const notFound = resp.headers.get('X-Audit-Not-Found') || '?';
+
+    const section   = document.getElementById('audit-results-section');
+    const container = document.getElementById('audit-results-container');
+    section.classList.remove('hidden');
+    container.innerHTML = `
+      <div class="info-grid">
+        <div class="info-row"><span class="info-label">Total numbers</span><span class="info-value">${esc(total)}</span></div>
+        <div class="info-row"><span class="info-label">Found in CUCM</span><span class="info-value">${esc(found)}</span></div>
+        <div class="info-row"><span class="info-label">Not in CUCM</span><span class="info-value">${esc(notFound)}</span></div>
+      </div>`;
+    section.scrollIntoView({ behavior: 'smooth' });
+  } finally { btn.textContent = 'Run Audit'; btn.disabled = false; }
+}
+
+// ============================================================
+// SD Updater
+// ============================================================
+let sdMacList    = [];
+let sdPreviewData = [];
+let sdSelectedDirn = null; // {pattern, partition} or null
+
+async function sdFetchPreview(e) {
+  e.preventDefault();
+  const btn = document.getElementById('sd-preview-btn');
+  btn.textContent = 'Fetching…'; btn.disabled = true;
+  document.getElementById('sd-preview-section').classList.add('hidden');
+  document.getElementById('sd-update-section').classList.add('hidden');
+  document.getElementById('sd-results-section').classList.add('hidden');
+
+  const clusterId = parseInt(document.getElementById('sd-cluster').value);
+  sdMacList = document.getElementById('sd-macs').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+
+  try {
+    const resp = await fetch('/api/sd-updater/preview', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cluster_id: clusterId, mac_list: sdMacList}),
+    });
+    if (!resp.ok) { const err = await resp.json(); alert('Error: ' + (err.detail || 'Unknown')); return; }
+    sdPreviewData = await resp.json();
+    renderSdPreview(sdPreviewData);
+  } finally { btn.textContent = 'Fetch Speed Dials & BLFs'; btn.disabled = false; }
+}
+
+function renderSdPreview(results) {
+  const section   = document.getElementById('sd-preview-section');
+  const container = document.getElementById('sd-preview-container');
+  const summary   = document.getElementById('sd-preview-summary');
+  const found     = results.filter(r => !r.error).length;
+  summary.textContent = `${found} of ${results.length} found`;
+
+  container.innerHTML = `<table>
+    <thead>
+      <tr><th></th><th>Device Name</th><th>MAC</th><th>Speed Dials</th><th>BLFs</th></tr>
+    </thead>
+    <tbody id="sd-preview-tbody">
+      ${results.map((r, i) => renderSdDeviceRows(r, i)).join('')}
+    </tbody>
+  </table>`;
+
+  section.classList.remove('hidden');
+  section.scrollIntoView({behavior: 'smooth'});
+  if (found > 0) document.getElementById('sd-update-section').classList.remove('hidden');
+}
+
+function renderSdDeviceRows(r, i) {
+  if (r.error) {
+    return `<tr>
+      <td></td>
+      <td class="mono">${esc(r.device_name)}</td>
+      <td class="mono">${esc(r.mac)}</td>
+      <td colspan="2" class="error-msg">${esc(r.error)}</td>
+    </tr>`;
+  }
+
+  const sdCount  = r.speed_dials.length;
+  const blfCount = r.blfs.length;
+
+  const sdTable = sdCount ? `
+    <table style="font-size:0.85rem; margin-top:4px;">
+      <thead><tr><th>Pos</th><th>Number</th><th>Label</th></tr></thead>
+      <tbody>${r.speed_dials.map(sd => `
+        <tr>
+          <td>${esc(sd.index)}</td>
+          <td class="mono">${esc(sd.dirn || '—')}</td>
+          <td>${esc(sd.label || '—')}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : `<p style="font-size:0.85rem;color:#9ca3af;margin:4px 0;">None configured</p>`;
+
+  const blfTable = blfCount ? `
+    <table style="font-size:0.85rem; margin-top:4px;">
+      <thead><tr><th>Pos</th><th>Dest</th><th>DN</th><th>Partition</th><th>Label</th></tr></thead>
+      <tbody>${r.blfs.map(b => `
+        <tr>
+          <td>${esc(b.index)}</td>
+          <td class="mono">${esc(b.blfDest || '—')}</td>
+          <td class="mono">${esc((b.blfDirn_pattern||'').replace(/^\\/,'') || '—')}</td>
+          <td>${esc(b.blfDirn_partition || '—')}</td>
+          <td>${esc(b.label || '—')}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : `<p style="font-size:0.85rem;color:#9ca3af;margin:4px 0;">None configured</p>`;
+
+  return `
+    <tr style="cursor:pointer;" onclick="sdToggleRow(${i})">
+      <td id="sd-toggle-${i}" style="color:#2563eb; font-size:0.85rem; user-select:none;">▶</td>
+      <td class="mono">${esc(r.device_name)}</td>
+      <td class="mono">${esc(r.mac)}</td>
+      <td>${sdCount} SD${sdCount !== 1 ? 's' : ''}</td>
+      <td>${blfCount} BLF${blfCount !== 1 ? 's' : ''}</td>
+    </tr>
+    <tr id="sd-detail-${i}" class="hidden">
+      <td colspan="5" style="background:#f9fafb; padding:12px 16px; border-top:none;">
+        <div style="display:flex; gap:32px; flex-wrap:wrap;">
+          <div><strong style="font-size:0.85rem;">Speed Dials</strong>${sdTable}</div>
+          <div><strong style="font-size:0.85rem;">BLF Speed Dials</strong>${blfTable}</div>
+        </div>
+      </td>
+    </tr>`;
+}
+
+function sdToggleRow(i) {
+  const detail = document.getElementById(`sd-detail-${i}`);
+  const toggle = document.getElementById(`sd-toggle-${i}`);
+  const hidden = detail.classList.toggle('hidden');
+  toggle.textContent = hidden ? '▶' : '▼';
+}
+
+function sdExpandAll() {
+  sdPreviewData.forEach((r, i) => {
+    if (r.error) return;
+    document.getElementById(`sd-detail-${i}`)?.classList.remove('hidden');
+    const t = document.getElementById(`sd-toggle-${i}`);
+    if (t) t.textContent = '▼';
+  });
+}
+
+function sdCollapseAll() {
+  sdPreviewData.forEach((_, i) => {
+    document.getElementById(`sd-detail-${i}`)?.classList.add('hidden');
+    const t = document.getElementById(`sd-toggle-${i}`);
+    if (t) t.textContent = '▶';
+  });
+}
+
+function sdToggleType() {
+  const type = document.querySelector('input[name="sd-type"]:checked').value;
+  document.getElementById('sd-sd-fields').classList.toggle('hidden', type !== 'sd');
+  document.getElementById('sd-blf-fields').classList.toggle('hidden', type !== 'blf');
+}
+
+function sdToggleAction() {
+  const removing = document.querySelector('input[name="sd-action"]:checked').value === 'remove';
+  document.getElementById('sd-sd-update-fields').classList.toggle('hidden', removing);
+  document.getElementById('sd-blf-update-fields').classList.toggle('hidden', removing);
+  document.getElementById('sd-update-btn').textContent = removing ? 'Remove from All Devices' : 'Update All Devices';
+}
+
+function sdToggleMode() {
+  const byNumber = document.querySelector('input[name="sd-mode"]:checked').value === 'by-number';
+  document.getElementById('sd-pos-field').classList.toggle('hidden', byNumber);
+  document.getElementById('sd-source-field').classList.toggle('hidden', !byNumber);
+  document.getElementById('blf-pos-field').classList.toggle('hidden', byNumber);
+  document.getElementById('blf-source-field').classList.toggle('hidden', !byNumber);
+}
+
+function sdClearDirn() {
+  sdSelectedDirn = null;
+  document.getElementById('blf-partition-row').classList.add('hidden');
+  document.getElementById('blf-dn-indicator').style.display = 'none';
+}
+
+async function sdFindDN() {
+  const number = document.getElementById('blf-dest').value.trim();
+  if (!number) { alert('Enter a number first.'); return; }
+  const clusterId = parseInt(document.getElementById('sd-cluster').value);
+  const btn = event.target;
+  btn.textContent = 'Searching…'; btn.disabled = true;
+  try {
+    const resp = await fetch('/api/sd-updater/find-dn', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cluster_id: clusterId, number}),
+    });
+    if (!resp.ok) { const err = await resp.json(); alert('Error: ' + (err.detail || 'Unknown')); return; }
+    const results = await resp.json();
+    if (!results.length) { alert(`No Directory Numbers found matching "${number}".`); return; }
+
+    const sel = document.getElementById('blf-partition-select');
+    sel.innerHTML = '<option value="">— Use as destination only —</option>' +
+      results.map(r => `<option value="${esc(r.partition || '')}">${esc(r.partition || '(No Partition)')}</option>`).join('');
+    document.getElementById('blf-partition-row').classList.remove('hidden');
+    sdSelectedDirn = null;
+    sdUpdateDirnIndicator();
+  } finally { btn.textContent = 'Find DN'; btn.disabled = false; }
+}
+
+function sdSelectPartition() {
+  const number    = document.getElementById('blf-dest').value.trim();
+  const partition = document.getElementById('blf-partition-select').value;
+  sdSelectedDirn  = partition ? {pattern: number, partition} : null;
+  sdUpdateDirnIndicator();
+}
+
+function sdUpdateDirnIndicator() {
+  const number    = document.getElementById('blf-dest').value.trim();
+  const partition = document.getElementById('blf-partition-select').value;
+  const indicator = document.getElementById('blf-dn-indicator');
+  const badge     = document.getElementById('blf-dn-badge');
+  indicator.style.display = 'block';
+  const displayNum = number.replace(/^\\/, '');
+  if (partition) {
+    badge.innerHTML = `<span class="type-badge" style="background:#d1fae5;color:#065f46;">BLF DN — ${esc(displayNum)} / ${esc(partition)}</span>`;
+  } else {
+    badge.innerHTML = `<span class="type-badge" style="background:#e5e7eb;color:#374151;">Destination only — ${esc(displayNum)}</span>`;
+  }
+}
+
+async function sdUpdate(e) {
+  e.preventDefault();
+  const type = document.querySelector('input[name="sd-type"]:checked').value;
+  const btn  = document.getElementById('sd-update-btn');
+  btn.textContent = 'Updating…'; btn.disabled = true;
+  document.getElementById('sd-results-section').classList.add('hidden');
+
+  const clusterId = parseInt(document.getElementById('sd-cluster').value);
+  const removing  = document.querySelector('input[name="sd-action"]:checked').value === 'remove';
+  const byNumber  = document.querySelector('input[name="sd-mode"]:checked').value === 'by-number';
+
+  try {
+    let resp;
+    if (type === 'sd') {
+      const sdIndex = byNumber ? null : parseInt(document.getElementById('sd-index').value);
+      const source  = byNumber ? document.getElementById('sd-source').value.trim() : null;
+      const dirn    = removing ? '' : document.getElementById('sd-dirn').value.trim();
+      const label   = removing ? '' : document.getElementById('sd-label').value.trim();
+      if (byNumber && !source) { alert('Source number is required.'); return; }
+      if (!removing && !dirn)  { alert('Number is required.'); return; }
+      resp = await fetch('/api/sd-updater/update', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({cluster_id: clusterId, mac_list: sdMacList,
+                              sd_index: sdIndex, source, dirn, label, remove: removing}),
+      });
+    } else {
+      const blfIndex = byNumber ? null : parseInt(document.getElementById('blf-index').value);
+      const source   = byNumber ? document.getElementById('blf-source').value.trim() : null;
+      const dest     = removing ? '' : document.getElementById('blf-dest').value.trim();
+      const label    = removing ? '' : document.getElementById('blf-label').value.trim();
+      if (byNumber && !source) { alert('Source number is required.'); return; }
+      if (!removing && !dest)  { alert('Destination number is required.'); return; }
+      resp = await fetch('/api/sd-updater/update-blf', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          cluster_id:     clusterId,
+          mac_list:       sdMacList,
+          blf_index:      blfIndex,
+          source,
+          dest,
+          label,
+          dirn_pattern:   removing ? null : (sdSelectedDirn?.pattern   || null),
+          dirn_partition: removing ? null : (sdSelectedDirn?.partition  || null),
+          remove:         removing,
+        }),
+      });
+    }
+    if (!resp.ok) { const err = await resp.json(); alert('Error: ' + (err.detail || 'Unknown')); return; }
+    renderSdResults(await resp.json());
+  } finally { btn.textContent = 'Update All Devices'; btn.disabled = false; }
+}
+
+function renderSdResults(results) {
+  const section   = document.getElementById('sd-results-section');
+  const container = document.getElementById('sd-results-container');
+  const summary   = document.getElementById('sd-results-summary');
+  const removing  = document.querySelector('input[name="sd-action"]:checked').value === 'remove';
+  const ok      = results.filter(r => r.status === 'success').length;
+  const skipped = results.filter(r => r.status === 'skipped').length;
+  const err     = results.filter(r => r.status === 'error').length;
+  summary.textContent = `${ok} ${removing ? 'removed' : 'updated'}`
+    + (skipped ? `, ${skipped} not found` : '')
+    + (err     ? `, ${err} failed`        : '');
+
+  container.innerHTML = `<table>
+    <thead><tr><th>MAC</th><th>Device Name</th><th>Status</th></tr></thead>
+    <tbody>${results.map(r =>
+      `<tr>
+        <td class="mono">${esc(r.mac)}</td>
+        <td class="mono">${esc(r.device_name)}</td>
+        <td>${r.status === 'success'
+          ? `<span class="type-badge" style="background:#d1fae5;color:#065f46;">${removing ? 'Removed' : 'Updated'}</span>`
+          : r.status === 'skipped' ? `<span class="type-badge" style="background:#fef3c7;color:#92400e;">Not found</span>`
+          : `<span class="type-badge" style="background:#fee2e2;color:#991b1b;">${esc(r.error || 'Error')}</span>`
+        }</td>
+      </tr>`
+    ).join('')}</tbody></table>`;
+
+  section.classList.remove('hidden');
+  section.scrollIntoView({behavior: 'smooth'});
+}
+
+loadClusters();
+</script>
+</body>
+</html>
